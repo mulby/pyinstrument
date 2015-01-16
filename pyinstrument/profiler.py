@@ -5,6 +5,7 @@ import timeit
 import signal
 from collections import deque
 from operator import methodcaller
+import json
 
 timer = timeit.default_timer
 
@@ -153,6 +154,35 @@ class Profiler(object):
         else:
             return self.first_interesting_frame()
 
+    def save(self, filename=None, file_obj=None):
+        root_frame = self.root_frame()
+        if not file_obj:
+            if not filename:
+                raise ValueError("Either filename or file_obj must be specified.")
+            else:
+                with open(filename, 'wb') as output_file:
+                    root_frame.to_json(file_obj=output_file)
+        else:
+            root_frame.to_json(file_obj=file_obj)
+
+    def add(self, other_filename):
+        with open(other_filename, 'rb') as input_file:
+            other_root_frame = Frame.from_json(input_file)
+
+        def add_frame(original_frame, new_frame):
+            if original_frame.identifier == new_frame.identifier:
+                original_frame.self_time += new_frame.self_time
+
+            for child_frame in new_frame.children:
+                matching_original_child = original_frame.children_dict.get(child_frame.identifier)
+                if not matching_original_child:
+                    child_frame.parent = original_frame
+                    original_frame.add_child(child_frame)
+                else:
+                    add_frame(matching_original_child, child_frame)
+
+        add_frame(self.root_frame(), other_root_frame)
+
     def output_text(self, root=False, unicode=False, color=False):
         return self.starting_frame(root=root).as_text(unicode=unicode, color=color)
 
@@ -183,6 +213,9 @@ class Profiler(object):
             </html>'''.format(css=css, js=js, jquery_js=jquery_js, body=body)
 
         return page
+
+    def output_json(self, root=False):
+        return self.starting_frame(root).to_json()
 
 
 class Frame(object):
@@ -364,6 +397,43 @@ class Frame(object):
         result += '</div></div>'
 
         return result
+
+    def as_dict(self):
+        return {
+            'identifier': self.identifier,
+            'function': self.function,
+            'file_path': self.file_path,
+            'line_no': self.line_no,
+            'self_time': self.self_time,
+            'children': [child.as_dict() for child in self.children]
+        }
+
+    @staticmethod
+    def from_dict(frame_dict, parent=None):
+        identifier = frame_dict.get('identifier')
+        if not identifier:
+            identifier = ''
+        frame = Frame(identifier=identifier, parent=parent)
+        frame.self_time = frame_dict['self_time']
+        for child_frame_dict in frame_dict['children']:
+            frame.add_child(Frame.from_dict(child_frame_dict, parent=frame))
+
+        return frame
+
+    def to_json(self, file_obj=None):
+        if file_obj:
+            json.dump(self.as_dict(), file_obj)
+        else:
+            return json.dumps(self.as_dict())
+
+    @staticmethod
+    def from_json(file_obj=None, json_string=None):
+        if file_obj:
+            return Frame.from_dict(json.load(file_obj))
+        elif json_string:
+            return Frame.from_dict(json.loads(json_string))
+        else:
+            raise ValueError('Either a JSON input file or a JSON string must be specified.')
 
     def _ansi_color_for_time(self):
         colors = colors_enabled
