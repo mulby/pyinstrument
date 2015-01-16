@@ -36,6 +36,9 @@ def main():
     parser.add_option('', '--html',
         dest="output_html", action='store_true',
         help="output HTML instead of text", default=False)
+    parser.add_option('', '--json',
+        dest="output_json", action='store_true',
+        help="output json data instead of text", default=False)
     parser.add_option('-o', '--outfile',
         dest="outfile", action='store',
         help="save report to <outfile>", default=None)
@@ -118,13 +121,14 @@ def main():
 
         if options.output_html:
             f.write(profiler.output_html())
+        elif options.output_json:
+            f.write(profiler.output_json())
         else:
             f.write(profiler.output_text(unicode=unicode, color=color))
 
         f.close()
     else:
         parser.print_usage()
-    return parser
 
 def file_supports_color(file_obj):
     """

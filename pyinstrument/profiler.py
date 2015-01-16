@@ -5,6 +5,8 @@ import timeit
 import signal
 from collections import deque
 from operator import methodcaller
+import json
+import datetime
 
 timer = timeit.default_timer
 
@@ -153,6 +155,35 @@ class Profiler(object):
         else:
             return self.first_interesting_frame()
 
+    def save(self, filename=None, file_obj=None):
+        root_frame = self.root_frame()
+        if not file_obj:
+            if not filename:
+                raise ValueError("Either filename or file_obj must be specified.")
+            else:
+                with open(filename, 'wb') as output_file:
+                    root_frame.to_json(file_obj=output_file)
+        else:
+            root_frame.to_json(file_obj=file_obj)
+
+    def add(self, other_filename):
+        with open(other_filename, 'rb') as input_file:
+            other_root_frame = Frame.from_json(input_file)
+
+        def add_frame(original_frame, new_frame):
+            if original_frame.identifier == new_frame.identifier:
+                original_frame.self_time += new_frame.self_time
+
+            for child_frame in new_frame.children:
+                matching_original_child = original_frame.children_dict.get(child_frame.identifier)
+                if not matching_original_child:
+                    child_frame.parent = original_frame
+                    original_frame.add_child(child_frame)
+                else:
+                    add_frame(matching_original_child, child_frame)
+
+        add_frame(self.root_frame(), other_root_frame)
+
     def output_text(self, root=False, unicode=False, color=False):
         return self.starting_frame(root=root).as_text(unicode=unicode, color=color)
 
@@ -183,6 +214,9 @@ class Profiler(object):
             </html>'''.format(css=css, js=js, jquery_js=jquery_js, body=body)
 
         return page
+
+    def output_json(self, root=False):
+        return self.starting_frame(root).to_json()
 
 
 class Frame(object):
@@ -217,19 +251,23 @@ class Frame(object):
             if self.file_path:
                 result = None
 
-                for path in sys.path:
-                    # On Windows, if self.file_path and path are on different drives, relpath
-                    # will result in exception, because it cannot compute a relpath in this case.
-                    # The root cause is that on Windows, there is no root dir like '/' on Linux.
-                    try:
-                        candidate = os.path.relpath(self.file_path, path)
-                    except ValueError:
-                        continue
+                index = self.file_path.rfind('site-packages')
+                if index > 0:
+                    self._file_path_short = self.file_path[(index + len('site-packages') + 1):]
+                else:
+                    for path in sys.path:
+                        # On Windows, if self.file_path and path are on different drives, relpath
+                        # will result in exception, because it cannot compute a relpath in this case.
+                        # The root cause is that on Windows, there is no root dir like '/' on Linux.
+                        try:
+                            candidate = os.path.relpath(self.file_path, path)
+                        except ValueError:
+                            continue
 
-                    if not result or (len(candidate.split(os.sep)) < len(result.split(os.sep))):
-                        result = candidate
+                        if not result or (len(candidate.split(os.sep)) < len(result.split(os.sep))):
+                            result = candidate
 
-                self._file_path_short = result
+                    self._file_path_short = result
             else:
                 self._file_path_short = None
 
@@ -333,20 +371,23 @@ class Frame(object):
     def as_html(self):
         start_collapsed = all(child.proportion_of_total < 0.1 for child in self.children)
 
+        # add this filter to prevent the output file getting too large
+        children = [f for f in self.sorted_children if f.proportion_of_total > 0.001]
+
         extra_class = ''
         extra_class += 'collapse ' if start_collapsed else ''
-        extra_class += 'no_children ' if not self.children else ''
+        extra_class += 'no_children ' if not children else ''
         extra_class += 'application ' if self.is_application_code else ''
 
         result = '''<div class="frame {extra_class}" data-time="{time}" date-parent-time="{parent_proportion}">
             <div class="frame-info">
-                <span class="time">{time:.3f}s</span>
+                <span class="time">{time}</span>
                 <span class="total-percent">{total_proportion:.1%}</span>
                 <!--<span class="parent-percent">{parent_proportion:.1%}</span>-->
                 <span class="function">{function}</span>
                 <span class="code-position">{code_position}</span>
             </div>'''.format(
-                time=self.time(),
+                time=datetime.timedelta(seconds=self.time()),
                 function=self.function,
                 code_position=self.code_position_short,
                 parent_proportion=self.proportion_of_parent,
@@ -355,15 +396,49 @@ class Frame(object):
 
         result += '<div class="frame-children">'
 
-        # add this filter to prevent the output file getting too large
-        children = [f for f in self.sorted_children if f.proportion_of_total > 0.005]
-
         for child in children:
             result += child.as_html()
 
         result += '</div></div>'
 
         return result
+
+    def as_dict(self):
+        return {
+            'identifier': self.identifier,
+            'function': self.function,
+            'file_path': self.file_path,
+            'line_no': self.line_no,
+            'self_time': self.self_time,
+            'children': [child.as_dict() for child in self.children]
+        }
+
+    @staticmethod
+    def from_dict(frame_dict, parent=None):
+        identifier = frame_dict.get('identifier')
+        if not identifier:
+            identifier = ''
+        frame = Frame(identifier=identifier, parent=parent)
+        frame.self_time = frame_dict['self_time']
+        for child_frame_dict in frame_dict['children']:
+            frame.add_child(Frame.from_dict(child_frame_dict, parent=frame))
+
+        return frame
+
+    def to_json(self, file_obj=None):
+        if file_obj:
+            json.dump(self.as_dict(), file_obj)
+        else:
+            return json.dumps(self.as_dict())
+
+    @staticmethod
+    def from_json(file_obj=None, json_string=None):
+        if file_obj:
+            return Frame.from_dict(json.load(file_obj))
+        elif json_string:
+            return Frame.from_dict(json.loads(json_string))
+        else:
+            raise ValueError('Either a JSON input file or a JSON string must be specified.')
 
     def _ansi_color_for_time(self):
         colors = colors_enabled
