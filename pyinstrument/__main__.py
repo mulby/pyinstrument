@@ -158,5 +158,35 @@ def file_supports_unicode(file_obj):
         return True
     return False
 
+def combine():
+    usage = ("usage: pyinstrument-combine [options] file [file...] ...")
+    parser = OptionParser(usage=usage)
+    parser.allow_interspersed_args = False
+
+    parser.add_option(
+        '-o', '--outfile',
+        dest="outfile", action='store',
+        help="save to <outfile>", default=None
+    )
+
+    if not sys.argv[1:]:
+        parser.print_help()
+        sys.exit(2)
+
+    (options, saved_files) = parser.parse_args()
+
+    if len(saved_files) == 0:
+        parser.print_usage()
+        return
+
+    profiler = Profiler()
+    for filename in saved_files:
+        profiler.add(filename)
+
+    if options.outfile:
+        profiler.save(filename=options.outfile)
+    else:
+        profiler.save(file_obj=sys.stdout)
+
 if __name__ == '__main__':
     main()

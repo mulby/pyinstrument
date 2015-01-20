@@ -10,7 +10,7 @@ setup(
     url='https://github.com/joerick/pyinstrument',
     keywords=['profiling', 'profile', 'profiler', 'cpu', 'time'],
     include_package_data=True,
-    entry_points={'console_scripts': ['pyinstrument = pyinstrument.__main__:main']},
+    entry_points={'console_scripts': ['pyinstrument = pyinstrument.__main__:main', 'pyinstrument-combine = pyinstrument.__main__:combine']},
     zip_safe=False,
     classifiers=[
         'Development Status :: 4 - Beta',
